@@ -79,7 +79,7 @@ y = np.array([0] * len(ham_emails + [1] * len(spam_emails)))
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state=42)
 
 # now we need a function to convert the email into a string text
-def email_to_text(email):
+def email_to_text2(email):
     content = ""
     main_type = email.get_content_maintype()
     if main_type == "multipart":
@@ -95,6 +95,24 @@ def email_to_text(email):
         elif type == "text/plain":
             content = email.get_content()
     return content.strip()
+
+def email_to_text(email):
+    html = None
+    for part in email.walk():
+        ctype = part.get_content_type()
+        if not ctype in ("text/plain", "text/html"):
+            continue
+        try:
+            content = part.get_content().strip()
+        except:
+            content = str(part.get_payload()).strip()
+        if ctype == "text/plain":
+            return content
+        else:
+            html = content
+    if html:
+        soup = BeautifulSoup(html)
+        return soup.getText().strip()
 
 # now I need a transformer that will generate word counts in each email
 class EmailToWordCount(BaseEstimator, TransformerMixin):
