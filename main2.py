@@ -10,6 +10,8 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from collections import Counter
 import urlextract
 from scipy.sparse import csr_matrix
+from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import Pipeline
 
 
 download_url = "https://spamassassin.apache.org/old/publiccorpus/"
@@ -100,10 +102,10 @@ class EmailToWordCount(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         return self
 
-    def fit_transform(self, X, y=None):
+    def transform(self, X, y=None):
         X_transformed = []
         for email in X:
-            text = email_to_text(email)
+            text = email_to_text(email) or ""
             # convert to lower case
             text = text.lower()
             # replace urls by URL
@@ -136,6 +138,9 @@ class WordCountToMatrix(BaseEstimator, TransformerMixin):
         self.vocabulary_size = vocabulary_size
 
     def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
         total_count = Counter()
         for word_count in X:
             for word, count in word_count.items():
@@ -158,3 +163,18 @@ X_few_matrix = word_counter_to_matrix.fit(X_few_word_counts)
 X_few_matrix.toarray()
 # seems fine
 
+# run ML algorithms
+# first transform all data
+
+preprocess_pipeline = Pipeline([
+    ("email_to_word_count", EmailToWordCount()),
+    ("word_count_to_matrix", WordCountToMatrix())
+])
+
+X_train_transformed = preprocess_pipeline.fit_transform(X_train)
+
+# Logistic regression
+from sklearn.linear_model import LogisticRegression
+lr_clf = LogisticRegression()
+score = cross_val_score(lr_clf, X_train_transformed, y_train, cv=3)
+score.mean()
