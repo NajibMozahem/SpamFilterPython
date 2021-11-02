@@ -67,6 +67,9 @@ def load_email(is_spam, filename):
 ham_emails = [load_email(is_spam=False, filename=name) for name in ham_filenames]
 spam_emails = [load_email(is_spam=True, filename=name) for name in spam_filenames]
 
+# now delete the emails
+shutil.rmtree("datasets")
+
 # now that we have the emails, split the data into test and train sets
 X = np.array(ham_emails + spam_emails, dtype=object)
 y = np.array([0] * len(ham_emails + [1] * len(spam_emails)))
