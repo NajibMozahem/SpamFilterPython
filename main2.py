@@ -8,10 +8,12 @@ from sklearn.model_selection import train_test_split
 from bs4 import BeautifulSoup
 from sklearn.base import BaseEstimator, TransformerMixin
 from collections import Counter
-import urlextract
+import matplotlib.pyplot as plt
 from scipy.sparse import csr_matrix
 from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
+import email
+import email.policy
 
 
 download_url = "https://spamassassin.apache.org/old/publiccorpus/"
@@ -59,8 +61,6 @@ ham_filenames = [name for name in os.listdir(ham) if len(name) > 20]
 spam_filenames = [name for name in os.listdir(spam) if len(name) > 20]
 
 # now read the emails into arrays
-import email
-import email.policy
 def load_email(is_spam, filename):
     directory = spam if is_spam else ham
     with open(os.path.join(directory, filename), "rb") as f:
@@ -74,45 +74,25 @@ shutil.rmtree("datasets")
 
 # now that we have the emails, split the data into test and train sets
 X = np.array(ham_emails + spam_emails, dtype=object)
-y = np.array([0] * len(ham_emails + [1] * len(spam_emails)))
+y = np.array([0] * len(ham_emails) + [1] * len(spam_emails))
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state=42)
 
 # now we need a function to convert the email into a string text
-def email_to_text2(email):
-    content = ""
-    main_type = email.get_content_maintype()
-    if main_type == "multipart":
-        for part in email.get_payload():
-            if part.get_content_maintype() == "text":
-                content = part.get_payload()
-    elif main_type == "text":
-        type = email.get_content_type()
-        if type == "text/html":
-            content = email.get_content()
-            soup = BeautifulSoup(content)
-            content = soup.getText()
-        elif type == "text/plain":
-            content = email.get_content()
-    return content.strip()
-
 def email_to_text(email):
-    html = None
+    content = ""
     for part in email.walk():
-        ctype = part.get_content_type()
-        if not ctype in ("text/plain", "text/html"):
-            continue
-        try:
-            content = part.get_content().strip()
-        except:
-            content = str(part.get_payload()).strip()
-        if ctype == "text/plain":
-            return content
-        else:
-            html = content
-    if html:
-        soup = BeautifulSoup(html)
-        return soup.getText().strip()
+        content_type = part.get_content_type()
+        if content_type in ("text/plain", "text/html"):
+            try:
+                content = part.get_content()
+            except:
+                content = str(part.get_payload())
+            if content_type == "text/html":
+                soup = BeautifulSoup(content)
+                content = soup.getText(content)
+            return content.strip()
+    return content
 
 # now I need a transformer that will generate word counts in each email
 class EmailToWordCount(BaseEstimator, TransformerMixin):
@@ -127,10 +107,11 @@ class EmailToWordCount(BaseEstimator, TransformerMixin):
             # convert to lower case
             text = text.lower()
             # replace urls by URL
-            url_extractor = urlextract.URLExtract()
-            urls = list(set(url_extractor.find_urls(text)))
-            for url in urls:
-                text = text.replace(url, "URL")
+            text = re.sub(r'(https?://\S+)', "URL", text)
+            #url_extractor = urlextract.URLExtract()
+            #urls = list(set(url_extractor.find_urls(text)))
+            #for url in urls:
+                #text = text.replace(url, "URL")
             # replace numbers by NUMBER
             text = re.sub(r'\d+(?:\.\d*)?(?:[eE][+-]?\d+)?', 'NUMBER', text)
             # replace emails by EMAIL
@@ -177,7 +158,7 @@ class WordCountToMatrix(BaseEstimator, TransformerMixin):
 
 # let us try it out
 word_counter_to_matrix = WordCountToMatrix(vocabulary_size=10)
-X_few_matrix = word_counter_to_matrix.fit(X_few_word_counts)
+X_few_matrix = word_counter_to_matrix.fit_transform(X_few_word_counts)
 X_few_matrix.toarray()
 # seems fine
 
@@ -193,6 +174,52 @@ X_train_transformed = preprocess_pipeline.fit_transform(X_train)
 
 # Logistic regression
 from sklearn.linear_model import LogisticRegression
-lr_clf = LogisticRegression()
+lr_clf = LogisticRegression(max_iter=10000)
 score = cross_val_score(lr_clf, X_train_transformed, y_train, cv=3)
-score.mean()
+lr_accuracy = score.mean()
+score = cross_val_score(lr_clf, X_train_transformed, y_train, cv=3, scoring="f1")
+lr_f1 = score.mean()
+
+# KNN
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+
+knn_clf = KNeighborsClassifier()
+n_neighbors = range(2, 10)
+parameters = dict(n_neighbors=n_neighbors)
+knn_grid = GridSearchCV(knn_clf, parameters, cv=3)
+best_model = knn_grid.fit(X_train_transformed, y_train)
+best_parameters = best_model.best_params_
+knn_clf = KNeighborsClassifier(n_neighbors=best_parameters["n_neighbors"])
+knn_clf.fit(X_train_transformed, y_train)
+knn_yhat = knn_clf.predict(X_train_transformed)
+knn_accuracy = accuracy_score(y_train, knn_yhat)
+knn_f1 = f1_score(y_train, knn_yhat)
+
+# Decision tree
+from sklearn.tree import DecisionTreeClassifier
+tree_clf = DecisionTreeClassifier()
+max_depth = list(range(1, 50, 5))
+min_samples_split = list(range(1, 20, 2))
+max_features = np.linspace(0.1, 0.9, 5)
+parameters = dict(max_depth=max_depth, min_samples_split=min_samples_split, max_features=max_features)
+tree_grid = GridSearchCV(tree_clf, parameters, cv=3)
+best_model = tree_grid.fit(X_train_transformed, y_train)
+best_parameters = best_model.best_params_
+tree_clf = DecisionTreeClassifier(max_depth=best_parameters["max_depth"],
+                                  min_samples_split=best_parameters["min_samples_split"],
+                                  max_features=best_parameters["max_features"])
+tree_clf.fit(X_train_transformed, y_train)
+tree_yhat = tree_clf.predict(X_train_transformed)
+tree_accuracy = accuracy_score(y_train, tree_yhat)
+tree_f1 = f1_score(y_train, tree_yhat)
+
+models = ["logistic", "knn", "tree"]
+accuracy = [lr_accuracy, knn_accuracy, tree_accuracy]
+f1 = [lr_f1, knn_f1, tree_f1]
+
+plt.plot(models, accuracy, label="accuracy")
+plt.plot(models, f1, label="f1 score")
+plt.legend()
